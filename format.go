@@ -177,8 +177,10 @@ func toCustomJSON(hierarchy *UnpackHierarchy, format JSONFormat) interface{} {
 		wrapArr := []interface{}{}
 		for _, link := range hierarchy.Links {
 			wrapMap := map[string]interface{}{
-				"msg":    fmt.Sprintf(link.Msg, link.MsgArgs...),
-				"fields": link.Fields,
+				"msg": fmt.Sprintf(link.Msg, link.MsgArgs...),
+			}
+			if link.Frame != nil {
+				wrapMap["fields"] = link.Fields
 			}
 			if format.Options.WithTrace {
 				wrapMap["src"] = format.Options.LocationFormatFunc(link.Frame)
