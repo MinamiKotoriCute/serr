@@ -97,12 +97,14 @@ func unpack(err error, parentPC uintptr) *UnpackHierarchy {
 		for stackFramError != nil && stackIndex != len(stack)-1 && stack[stackIndex+1] == stackFramError.GetAdditionalInformation().callerCaller {
 			additionalInformation := stackFramError.GetAdditionalInformation()
 			stackFrame := getStackFrame(additionalInformation.caller)
-			hierarchy.Links = append(hierarchy.Links, &WrapLink{
-				Msg:     additionalInformation.msg,
-				MsgArgs: additionalInformation.msgArgs,
-				Fields:  additionalInformation.fields,
-				Frame:   stackFrame,
-			})
+			if len(additionalInformation.msg) != 0 || len(additionalInformation.msgArgs) != 0 || len(additionalInformation.fields) != 0 {
+				hierarchy.Links = append(hierarchy.Links, &WrapLink{
+					Msg:     additionalInformation.msg,
+					MsgArgs: additionalInformation.msgArgs,
+					Fields:  additionalInformation.fields,
+					Frame:   stackFrame,
+				})
+			}
 			hierarchy.addStackFrame(stackFrame)
 
 			stackFramError = nextStackFrameError(stackFramError)

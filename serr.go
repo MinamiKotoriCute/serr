@@ -41,6 +41,23 @@ func getAdditionalInformation(callers []uintptr) *AdditionalInformation {
 	return info
 }
 
+func newAdditionalInformation(skip int) *AdditionalInformation {
+	var pcs [2]uintptr
+	n := runtime.Callers(skip, pcs[:])
+
+	info := &AdditionalInformation{}
+
+	if n > 0 {
+		info.caller = pcs[0]
+	}
+
+	if n > 1 {
+		info.callerCaller = pcs[1]
+	}
+
+	return info
+}
+
 type StackFrameError interface {
 	error
 	GetAdditionalInformation() *AdditionalInformation
@@ -72,11 +89,32 @@ type rootError struct {
 	err                   error
 }
 
-func New(fields map[string]interface{}, msg string) error {
-	callers := getCallers(3) // skip New, getCallers, runtime.Callers
+func New(msg string) error {
+	return ErrorDepths(1, nil, msg)
+}
+
+func Errorf(msg string, args ...interface{}) error {
+	return ErrorDepths(1, nil, msg, args...)
+}
+
+func Errors(fields map[string]interface{}, msg string, args ...interface{}) error {
+	return ErrorDepths(1, fields, msg, args...)
+}
+
+func ErrorDepth(skip int, msg string) error {
+	return ErrorDepths(skip+1, nil, msg)
+}
+
+func ErrorDepthf(skip int, fields map[string]interface{}, msg string, args ...interface{}) error {
+	return ErrorDepths(skip+1, fields, msg, args...)
+}
+
+func ErrorDepths(skip int, fields map[string]interface{}, msg string, args ...interface{}) error {
+	callers := getCallers(skip + 3) // skip ErrorDepths, getCallers, runtime.Callers
 	additionalInformation := getAdditionalInformation(callers)
 	additionalInformation.fields = fields
 	additionalInformation.msg = msg
+	additionalInformation.msgArgs = args
 
 	return &rootError{
 		callers:               callers,
@@ -110,44 +148,56 @@ type wrapError struct {
 }
 
 func Wrap(err error) error {
-	switch err := err.(type) {
-	case StackError:
-		return err
-	case StackFrameError:
-		return err
-	default:
-		callers := getCallers(3) // skip Wrap, getCallers, runtime.Callers
-		return &rootError{
-			callers: callers,
-			err:     err,
+	return WrapDepth(1, err)
+}
+
+func Wrapf(err error, msg string, msgArgs ...interface{}) error {
+	return WrapDepths(1, err, nil, msg, msgArgs...)
+}
+
+func Wraps(err error, fields map[string]interface{}, msg string, msgArgs ...interface{}) error {
+	return WrapDepths(1, err, fields, msg, msgArgs...)
+}
+
+func WrapDepth(skip int, err error) error {
+	if Cause(err) != nil {
+		return &wrapError{
+			additionalInformation: newAdditionalInformation(skip + 3), // skip WrapDepth, newAdditionalInformation, runtime.Callers
+			err:                   err,
 		}
+	}
+
+	return &rootError{
+		callers: getCallers(skip + 3), // skip WrapDepth, getCallers, runtime.Callers
+		err:     err,
 	}
 }
 
-func Wrapf(err error, fields map[string]interface{}, msg string, msgArgs ...interface{}) error {
-	return WrapDepth(err, 1, fields, msg, msgArgs...)
+func WrapDepthf(skip int, err error, msg string, msgArgs ...interface{}) error {
+	return WrapDepths(skip+1, err, nil, msg, msgArgs...)
 }
 
-func WrapDepth(err error, skip int, fields map[string]interface{}, msg string, msgArgs ...interface{}) error {
-	callers := getCallers(3 + skip) // skip WrapDepth, getCallers, runtime.Callers
-	additionalInformation := getAdditionalInformation(callers)
-	additionalInformation.fields = fields
-	additionalInformation.msg = msg
-	additionalInformation.msgArgs = msgArgs
+func WrapDepths(skip int, err error, fields map[string]interface{}, msg string, msgArgs ...interface{}) error {
+	if Cause(err) != nil {
+		additionalInformation := newAdditionalInformation(skip + 3) // skip WrapDepths, newAdditionalInformation, runtime.Callers
+		additionalInformation.fields = fields
+		additionalInformation.msg = msg
+		additionalInformation.msgArgs = msgArgs
 
-	switch err := err.(type) {
-	case *rootError:
-	case *wrapError:
-	case *joinError:
-	default:
-		return &rootError{
-			callers:               callers,
+		return &wrapError{
 			additionalInformation: additionalInformation,
 			err:                   err,
 		}
 	}
 
-	return &wrapError{
+	callers := getCallers(skip + 3) // skip WrapDepths, getCallers, runtime.Callers
+	additionalInformation := getAdditionalInformation(callers)
+	additionalInformation.fields = fields
+	additionalInformation.msg = msg
+	additionalInformation.msgArgs = msgArgs
+
+	return &rootError{
+		callers:               callers,
 		additionalInformation: additionalInformation,
 		err:                   err,
 	}

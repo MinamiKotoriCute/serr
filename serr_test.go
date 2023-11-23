@@ -12,7 +12,7 @@ var ErrAnother = errors.New("another")
 
 func f1(hasError bool) error {
 	if hasError {
-		return Wrapf(ErrSomething, map[string]interface{}{"f": "f1"}, "f1")
+		return Wraps(ErrSomething, map[string]interface{}{"f": "f1"}, "f1")
 	}
 
 	return nil
@@ -20,7 +20,7 @@ func f1(hasError bool) error {
 
 func f2(hasError bool) error {
 	if err := f1(hasError); err != nil {
-		return Wrapf(Wrapf(err, map[string]interface{}{"f": "f2", "order": 2}, "f2-2"), map[string]interface{}{"f": "f2", "order": 1}, "f2-1")
+		return Wraps(Wraps(err, map[string]interface{}{"f": "f2", "order": 2}, "f2-2"), map[string]interface{}{"f": "f2", "order": 1}, "f2-1")
 	}
 
 	return nil
@@ -38,7 +38,7 @@ func f3(hasError bool) error {
 
 func f4(hasError bool) error {
 	if err := f3(hasError); err != nil {
-		return Wrapf(err, map[string]interface{}{"f": "f4"}, "f4")
+		return Wraps(err, map[string]interface{}{"f": "f4"}, "f4")
 	}
 
 	return nil
@@ -79,4 +79,26 @@ func TestSerr2(t *testing.T) {
 	}
 
 	fmt.Print(ToString(err, true))
+}
+
+type AA struct {
+}
+
+func (o *AA) Error() string {
+	return ""
+}
+
+func (o *AA) Callers() []uintptr {
+	return []uintptr{}
+}
+
+func TestAAA(t *testing.T) {
+	a1 := &AA{}
+
+	a2 := Wrap(a1)
+
+	var a StackError
+	if !errors.As(a2, &a) {
+		t.Fatal()
+	}
 }
