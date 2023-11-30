@@ -70,7 +70,9 @@ func nextStackFrameError(err error) StackFrameError {
 			return nil
 		}
 
-		stackFrameError, ok := uerr.Unwrap().(StackFrameError)
+		err = uerr.Unwrap()
+
+		stackFrameError, ok := err.(StackFrameError)
 		if !ok {
 			return nil
 		}
