@@ -179,7 +179,7 @@ func toCustomJSON(hierarchy *UnpackHierarchy, format JSONFormat) interface{} {
 			wrapMap := map[string]interface{}{
 				"msg": fmt.Sprintf(link.Msg, link.MsgArgs...),
 			}
-			if link.Frame != nil {
+			if len(link.Fields) != 0 {
 				wrapMap["fields"] = link.Fields
 			}
 			if format.Options.WithTrace {
