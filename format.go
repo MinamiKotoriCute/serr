@@ -3,6 +3,7 @@ package serr
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -191,6 +192,9 @@ func toCustomJSON(hierarchy *UnpackHierarchy, format JSONFormat) interface{} {
 	}
 	if hierarchy.ErrExternal != nil {
 		root["external"] = fmt.Sprint(hierarchy.ErrExternal)
+		if format.Options.WithTrace {
+			root["type"] = reflect.TypeOf(hierarchy.ErrExternal).String()
+		}
 	}
 	if len(hierarchy.SubHierarchies) > 0 {
 		subArr := []interface{}{}
@@ -261,7 +265,11 @@ func toCustomString(hierarchy *UnpackHierarchy, format StringFormat, level int) 
 				stackIndex++
 			}
 		}
-		str += fmt.Sprintf(link.Msg, link.MsgArgs...) + format.PreFieldSep + format.FieldFormatFunc(link.Fields) + format.ErrorSep
+		str += fmt.Sprintf(link.Msg, link.MsgArgs...)
+		if len(link.Fields) != 0 {
+			str += format.PreFieldSep + format.FieldFormatFunc(link.Fields)
+		}
+		str += format.ErrorSep
 	}
 	if format.Options.WithTrace {
 		for stackIndex < len(hierarchy.Stack) {
