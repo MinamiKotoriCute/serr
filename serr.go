@@ -230,6 +230,7 @@ func Join(errs ...error) error {
 	return JoinDepth(1, errs...)
 }
 
+// join errors into first error
 func JoinDepth(skip int, errs ...error) error {
 	n := 0
 	for _, err := range errs {
@@ -249,6 +250,15 @@ func JoinDepth(skip int, errs ...error) error {
 				}
 			}
 		}
+	}
+
+	if jerr, ok := errs[0].(*joinError); ok {
+		for _, err := range errs[1:] {
+			if err != nil {
+				jerr.errs = append(jerr.errs, err)
+			}
+		}
+		return jerr
 	}
 
 	e := &joinError{
