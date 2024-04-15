@@ -7,7 +7,7 @@ import (
 
 type Fields map[string]interface{}
 
-func getCallers(skip int) []uintptr {
+func NewCallers(skip int) []uintptr {
 	const depth = 64
 	var pcs [depth]uintptr
 	n := runtime.Callers(skip, pcs[:])
@@ -27,7 +27,7 @@ type AdditionalInformation struct {
 	msgArgs      []interface{}
 }
 
-func getAdditionalInformation(callers []uintptr) *AdditionalInformation {
+func NewAdditionalInformationFromCallers(callers []uintptr) *AdditionalInformation {
 	info := &AdditionalInformation{}
 
 	if len(callers) > 0 {
@@ -41,7 +41,7 @@ func getAdditionalInformation(callers []uintptr) *AdditionalInformation {
 	return info
 }
 
-func newAdditionalInformation(skip int) *AdditionalInformation {
+func NewAdditionalInformation(skip int) *AdditionalInformation {
 	var pcs [2]uintptr
 	n := runtime.Callers(skip, pcs[:])
 
@@ -91,6 +91,9 @@ type rootError struct {
 	err                   error
 }
 
+var _ StackError = (*rootError)(nil)
+var _ StackFrameError = (*rootError)(nil)
+
 func New(msg string) error {
 	return ErrorDepths(1, nil, msg)
 }
@@ -112,8 +115,8 @@ func ErrorDepthf(skip int, fields map[string]interface{}, msg string, args ...in
 }
 
 func ErrorDepths(skip int, fields map[string]interface{}, msg string, args ...interface{}) error {
-	callers := getCallers(skip + 3) // skip ErrorDepths, getCallers, runtime.Callers
-	additionalInformation := getAdditionalInformation(callers)
+	callers := NewCallers(skip + 3) // skip ErrorDepths, NewCallers, runtime.Callers
+	additionalInformation := NewAdditionalInformationFromCallers(callers)
 	additionalInformation.fields = fields
 	additionalInformation.msg = msg
 	additionalInformation.msgArgs = args
@@ -149,6 +152,8 @@ type wrapError struct {
 	err                   error
 }
 
+var _ StackFrameError = (*wrapError)(nil)
+
 func Wrap(err error) error {
 	return WrapDepth(1, err)
 }
@@ -164,13 +169,13 @@ func Wraps(err error, fields map[string]interface{}, msg string, msgArgs ...inte
 func WrapDepth(skip int, err error) error {
 	if Cause(err) != nil {
 		return &wrapError{
-			additionalInformation: newAdditionalInformation(skip + 3), // skip WrapDepth, newAdditionalInformation, runtime.Callers
+			additionalInformation: NewAdditionalInformation(skip + 3), // skip WrapDepth, newAdditionalInformation, runtime.Callers
 			err:                   err,
 		}
 	}
 
 	return &rootError{
-		callers: getCallers(skip + 3), // skip WrapDepth, getCallers, runtime.Callers
+		callers: NewCallers(skip + 3), // skip WrapDepth, NewCallers, runtime.Callers
 		err:     err,
 	}
 }
@@ -181,7 +186,7 @@ func WrapDepthf(skip int, err error, msg string, msgArgs ...interface{}) error {
 
 func WrapDepths(skip int, err error, fields map[string]interface{}, msg string, msgArgs ...interface{}) error {
 	if Cause(err) != nil {
-		additionalInformation := newAdditionalInformation(skip + 3) // skip WrapDepths, newAdditionalInformation, runtime.Callers
+		additionalInformation := NewAdditionalInformation(skip + 3) // skip WrapDepths, newAdditionalInformation, runtime.Callers
 		additionalInformation.fields = fields
 		additionalInformation.msg = msg
 		additionalInformation.msgArgs = msgArgs
@@ -192,8 +197,8 @@ func WrapDepths(skip int, err error, fields map[string]interface{}, msg string, 
 		}
 	}
 
-	callers := getCallers(skip + 3) // skip WrapDepths, getCallers, runtime.Callers
-	additionalInformation := getAdditionalInformation(callers)
+	callers := NewCallers(skip + 3) // skip WrapDepths, NewCallers, runtime.Callers
+	additionalInformation := NewAdditionalInformationFromCallers(callers)
 	additionalInformation.fields = fields
 	additionalInformation.msg = msg
 	additionalInformation.msgArgs = msgArgs
@@ -226,6 +231,8 @@ type joinError struct {
 	errs    []error
 }
 
+var _ StackError = (*joinError)(nil)
+
 func Join(errs ...error) error {
 	return JoinDepth(1, errs...)
 }
@@ -245,7 +252,7 @@ func JoinDepth(skip int, errs ...error) error {
 		for _, err := range errs {
 			if err != nil {
 				return &rootError{
-					callers: getCallers(skip + 3), // skip Join, getCallers, runtime.Callers
+					callers: NewCallers(skip + 3), // skip Join, NewCallers, runtime.Callers
 					err:     err,
 				}
 			}
@@ -262,7 +269,7 @@ func JoinDepth(skip int, errs ...error) error {
 	}
 
 	e := &joinError{
-		callers: getCallers(skip + 3), // skip Join, getCallers, runtime.Callers
+		callers: NewCallers(skip + 3), // skip Join, NewCallers, runtime.Callers
 		errs:    make([]error, 0, n),
 	}
 	for _, err := range errs {
@@ -292,7 +299,7 @@ func (e *joinError) Callers() []uintptr {
 // get the first StackError, return nil if not found
 func Cause(err error) error {
 	for err != nil {
-		if _, ok := err.(StackError); ok {
+		if stackErr, ok := err.(StackError); ok && len(stackErr.Callers()) > 0 {
 			return err
 		}
 
