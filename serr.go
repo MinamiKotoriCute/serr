@@ -101,7 +101,7 @@ func (o *SimpleExtraStackError) Error() string {
 
 func NewSimpleExtraStackError(skip int) SimpleExtraStackError {
 	return SimpleExtraStackError{
-		extraStackData: NewExtraStackData(skip + 1), // skip NewSimpleExtraStackError
+		extraStackData: NewExtraStackData(skip + 3), // skip NewSimpleExtraStackError, NewExtraStackData, runtime.Callers
 	}
 }
 
