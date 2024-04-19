@@ -5,8 +5,6 @@ import (
 	"runtime"
 )
 
-type Fields map[string]interface{}
-
 func NewCallers(skip int) []uintptr {
 	const depth = 64
 	var pcs [depth]uintptr
@@ -14,12 +12,32 @@ func NewCallers(skip int) []uintptr {
 	return pcs[0:n]
 }
 
-type StackError interface {
+type FullStackError interface {
 	error
 	Callers() []uintptr
 }
 
-type AdditionalInformation struct {
+type SimpleFullStackError struct {
+	callers []uintptr
+}
+
+var _ FullStackError = (*SimpleFullStackError)(nil)
+
+func (o *SimpleFullStackError) Callers() []uintptr {
+	return o.callers
+}
+
+func (o *SimpleFullStackError) Error() string {
+	return "simple full stack error"
+}
+
+func NewSimpleFullStackError(skip int) SimpleFullStackError {
+	return SimpleFullStackError{
+		callers: NewCallers(skip + 3), // skip NewSimpleFullStackError, NewCallers, runtime.Callers
+	}
+}
+
+type ExtraStackData struct {
 	caller       uintptr
 	callerCaller uintptr
 	fields       map[string]interface{}
@@ -27,103 +45,112 @@ type AdditionalInformation struct {
 	msgArgs      []interface{}
 }
 
-func NewAdditionalInformationFromCallers(callers []uintptr) *AdditionalInformation {
-	info := &AdditionalInformation{}
-
-	if len(callers) > 0 {
-		info.caller = callers[0]
-	}
-
-	if len(callers) > 1 {
-		info.callerCaller = callers[1]
-	}
-
-	return info
-}
-
-func NewAdditionalInformation(skip int) *AdditionalInformation {
+func NewExtraStackData(skip int) *ExtraStackData {
 	var pcs [2]uintptr
 	n := runtime.Callers(skip, pcs[:])
 
-	info := &AdditionalInformation{}
+	extraStackData := &ExtraStackData{}
 
 	if n > 0 {
-		info.caller = pcs[0]
+		extraStackData.caller = pcs[0]
 	}
 
 	if n > 1 {
-		info.callerCaller = pcs[1]
+		extraStackData.callerCaller = pcs[1]
 	}
 
-	return info
+	return extraStackData
 }
 
-type StackFrameError interface {
+func NewExtraStackDataFromCallers(callers []uintptr) *ExtraStackData {
+	extraStackData := &ExtraStackData{}
+
+	if len(callers) > 0 {
+		extraStackData.caller = callers[0]
+	}
+
+	if len(callers) > 1 {
+		extraStackData.callerCaller = callers[1]
+	}
+
+	return extraStackData
+}
+
+type ExtraStackError interface {
 	error
-	GetAdditionalInformation() *AdditionalInformation
+	GetExtraStackData() *ExtraStackData
 }
 
-func nextStackFrameError(err error) StackFrameError {
-	for err != nil {
-		uerr, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return nil
-		}
+type SimpleExtraStackError struct {
+	extraStackData *ExtraStackData
+}
 
-		err = uerr.Unwrap()
+var _ ExtraStackError = (*SimpleExtraStackError)(nil)
 
-		stackFrameError, ok := err.(StackFrameError)
-		if !ok {
-			return nil
-		}
+func (o *SimpleExtraStackError) GetExtraStackData() *ExtraStackData {
+	return o.extraStackData
+}
 
-		if stackFrameError.GetAdditionalInformation() != nil {
-			return stackFrameError
-		}
+func (o *SimpleExtraStackError) Error() string {
+	if o.extraStackData == nil {
+		return "simple extra stack error"
+	} else {
+		return fmt.Sprintf(o.extraStackData.msg, o.extraStackData.msgArgs...)
 	}
+}
 
-	return nil
+func NewSimpleExtraStackError(skip int) SimpleExtraStackError {
+	return SimpleExtraStackError{
+		extraStackData: NewExtraStackData(skip + 1), // skip NewSimpleExtraStackError
+	}
 }
 
 type rootError struct {
-	callers               []uintptr
-	additionalInformation *AdditionalInformation
-	err                   error
+	SimpleFullStackError
+	SimpleExtraStackError
+	err error
 }
 
-var _ StackError = (*rootError)(nil)
-var _ StackFrameError = (*rootError)(nil)
+var _ FullStackError = (*rootError)(nil)
+var _ ExtraStackError = (*rootError)(nil)
 
 func New(msg string) error {
-	return ErrorDepths(1, nil, msg)
+	return ErrorDepthsWrapError(1, nil, nil, msg)
 }
 
 func Errorf(msg string, args ...interface{}) error {
-	return ErrorDepths(1, nil, msg, args...)
+	return ErrorDepthsWrapError(1, nil, nil, msg, args...)
 }
 
 func Errors(fields map[string]interface{}, msg string, args ...interface{}) error {
-	return ErrorDepths(1, fields, msg, args...)
+	return ErrorDepthsWrapError(1, nil, fields, msg, args...)
 }
 
 func ErrorDepth(skip int, msg string) error {
-	return ErrorDepths(skip+1, nil, msg)
+	return ErrorDepthsWrapError(skip+1, nil, nil, msg)
 }
 
-func ErrorDepthf(skip int, fields map[string]interface{}, msg string, args ...interface{}) error {
-	return ErrorDepths(skip+1, fields, msg, args...)
+func ErrorDepthf(skip int, msg string, args ...interface{}) error {
+	return ErrorDepthsWrapError(skip+1, nil, nil, msg, args...)
 }
 
 func ErrorDepths(skip int, fields map[string]interface{}, msg string, args ...interface{}) error {
-	callers := NewCallers(skip + 3) // skip ErrorDepths, NewCallers, runtime.Callers
-	additionalInformation := NewAdditionalInformationFromCallers(callers)
-	additionalInformation.fields = fields
-	additionalInformation.msg = msg
-	additionalInformation.msgArgs = args
+	return ErrorDepthsWrapError(skip+1, nil, fields, msg, args...)
+}
+
+func ErrorDepthsWrapError(skip int, err error, fields map[string]interface{}, msg string, args ...interface{}) error {
+	simpleFullStackErr := NewSimpleFullStackError(skip + 1) // skip ErrorDepthsWrapError
+	extraStackData := NewExtraStackDataFromCallers(simpleFullStackErr.Callers())
+	extraStackData.fields = fields
+	extraStackData.msg = msg
+	extraStackData.msgArgs = args
 
 	return &rootError{
-		callers:               callers,
-		additionalInformation: additionalInformation,
+		SimpleFullStackError: simpleFullStackErr,
+		SimpleExtraStackError: SimpleExtraStackError{
+			extraStackData: extraStackData,
+		},
+		err: err,
 	}
 }
 
@@ -139,20 +166,12 @@ func (e *rootError) Unwrap() error {
 	return e.err
 }
 
-func (e *rootError) Callers() []uintptr {
-	return e.callers
-}
-
-func (e *rootError) GetAdditionalInformation() *AdditionalInformation {
-	return e.additionalInformation
-}
-
 type wrapError struct {
-	additionalInformation *AdditionalInformation
-	err                   error
+	SimpleExtraStackError
+	err error
 }
 
-var _ StackFrameError = (*wrapError)(nil)
+var _ ExtraStackError = (*wrapError)(nil)
 
 func Wrap(err error) error {
 	return WrapDepth(1, err)
@@ -167,17 +186,7 @@ func Wraps(err error, fields map[string]interface{}, msg string, msgArgs ...inte
 }
 
 func WrapDepth(skip int, err error) error {
-	if Cause(err) != nil {
-		return &wrapError{
-			additionalInformation: NewAdditionalInformation(skip + 3), // skip WrapDepth, newAdditionalInformation, runtime.Callers
-			err:                   err,
-		}
-	}
-
-	return &rootError{
-		callers: NewCallers(skip + 3), // skip WrapDepth, NewCallers, runtime.Callers
-		err:     err,
-	}
+	return WrapDepths(skip+1, err, nil, "")
 }
 
 func WrapDepthf(skip int, err error, msg string, msgArgs ...interface{}) error {
@@ -186,28 +195,20 @@ func WrapDepthf(skip int, err error, msg string, msgArgs ...interface{}) error {
 
 func WrapDepths(skip int, err error, fields map[string]interface{}, msg string, msgArgs ...interface{}) error {
 	if Cause(err) != nil {
-		additionalInformation := NewAdditionalInformation(skip + 3) // skip WrapDepths, newAdditionalInformation, runtime.Callers
-		additionalInformation.fields = fields
-		additionalInformation.msg = msg
-		additionalInformation.msgArgs = msgArgs
+		extraStackData := NewExtraStackData(skip + 3) // skip WrapDepths, NewExtraStackData, runtime.Callers
+		extraStackData.fields = fields
+		extraStackData.msg = msg
+		extraStackData.msgArgs = msgArgs
 
 		return &wrapError{
-			additionalInformation: additionalInformation,
-			err:                   err,
+			SimpleExtraStackError: SimpleExtraStackError{
+				extraStackData: extraStackData,
+			},
+			err: err,
 		}
 	}
 
-	callers := NewCallers(skip + 3) // skip WrapDepths, NewCallers, runtime.Callers
-	additionalInformation := NewAdditionalInformationFromCallers(callers)
-	additionalInformation.fields = fields
-	additionalInformation.msg = msg
-	additionalInformation.msgArgs = msgArgs
-
-	return &rootError{
-		callers:               callers,
-		additionalInformation: additionalInformation,
-		err:                   err,
-	}
+	return ErrorDepthsWrapError(skip+1, err, nil, "")
 }
 
 func (e *wrapError) Error() string {
@@ -222,16 +223,12 @@ func (e *wrapError) Unwrap() error {
 	return e.err
 }
 
-func (e *wrapError) GetAdditionalInformation() *AdditionalInformation {
-	return e.additionalInformation
-}
-
 type joinError struct {
-	callers []uintptr
-	errs    []error
+	SimpleFullStackError
+	errs []error
 }
 
-var _ StackError = (*joinError)(nil)
+var _ FullStackError = (*joinError)(nil)
 
 func Join(errs ...error) error {
 	return JoinDepth(1, errs...)
@@ -251,10 +248,7 @@ func JoinDepth(skip int, errs ...error) error {
 	if n == 1 {
 		for _, err := range errs {
 			if err != nil {
-				return &rootError{
-					callers: NewCallers(skip + 3), // skip Join, NewCallers, runtime.Callers
-					err:     err,
-				}
+				return ErrorDepthsWrapError(skip+1, err, nil, "")
 			}
 		}
 	}
@@ -269,8 +263,10 @@ func JoinDepth(skip int, errs ...error) error {
 	}
 
 	e := &joinError{
-		callers: NewCallers(skip + 3), // skip Join, NewCallers, runtime.Callers
-		errs:    make([]error, 0, n),
+		SimpleFullStackError: SimpleFullStackError{
+			callers: NewCallers(skip + 3), // skip JoinDepth, NewCallers, runtime.Callers
+		},
+		errs: make([]error, 0, n),
 	}
 	for _, err := range errs {
 		if err != nil {
@@ -292,14 +288,10 @@ func (e *joinError) Unwrap() []error {
 	return e.errs
 }
 
-func (e *joinError) Callers() []uintptr {
-	return e.callers
-}
-
-// get the first StackError, return nil if not found
+// get the first FullStackError, return nil if not found
 func Cause(err error) error {
 	for err != nil {
-		if stackErr, ok := err.(StackError); ok && len(stackErr.Callers()) > 0 {
+		if fullStackErr, ok := err.(FullStackError); ok && len(fullStackErr.Callers()) > 0 {
 			return err
 		}
 
@@ -307,6 +299,28 @@ func Cause(err error) error {
 			return nil
 		} else {
 			err = uerr.Unwrap()
+		}
+	}
+
+	return nil
+}
+
+func NextExtraStackError(err error) ExtraStackError {
+	for err != nil {
+		uerr, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return nil
+		}
+
+		err = uerr.Unwrap()
+
+		stackFrameError, ok := err.(ExtraStackError)
+		if !ok {
+			return nil
+		}
+
+		if stackFrameError.GetExtraStackData() != nil {
+			return stackFrameError
 		}
 	}
 

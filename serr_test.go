@@ -97,7 +97,7 @@ func TestAAA(t *testing.T) {
 
 	a2 := Wrap(a1)
 
-	var a StackError
+	var a FullStackError
 	if !errors.As(a2, &a) {
 		t.Fatal()
 	}

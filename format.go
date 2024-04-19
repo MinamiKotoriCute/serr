@@ -9,15 +9,15 @@ import (
 	"strings"
 )
 
-type StackFrame struct {
+type Location struct {
 	Filename string
 	Line     int
 	FuncName string
 }
 
-func getStackFrame(pc uintptr) *StackFrame {
+func getLocation(pc uintptr) *Location {
 	if pc == 0 {
-		return &StackFrame{}
+		return &Location{}
 	}
 
 	frames := runtime.CallersFrames([]uintptr{pc})
@@ -26,7 +26,7 @@ func getStackFrame(pc uintptr) *StackFrame {
 	i := strings.LastIndex(frame.Function, "/")
 	name := frame.Function[i+1:]
 
-	return &StackFrame{
+	return &Location{
 		Filename: frame.File,
 		Line:     frame.Line,
 		FuncName: name,
@@ -34,29 +34,29 @@ func getStackFrame(pc uintptr) *StackFrame {
 }
 
 type WrapLink struct {
-	Msg     string
-	MsgArgs []interface{}
-	Fields  map[string]interface{}
-	Frame   *StackFrame
+	Msg            string
+	MsgArgs        []interface{}
+	Fields         map[string]interface{}
+	CallerLocation *Location
 }
 
 type UnpackHierarchy struct {
-	ErrExternal    error
-	Stack          []*StackFrame
-	Links          []*WrapLink
-	SubHierarchies []*UnpackHierarchy
+	ErrExternal     error
+	CallerLocations []*Location
+	Links           []*WrapLink
+	SubHierarchies  []*UnpackHierarchy
 }
 
-func (o *UnpackHierarchy) addStackFrame(stackFrame *StackFrame) {
-	if stackFrame == nil {
+func (o *UnpackHierarchy) addCallerLocation(callerLocation *Location) {
+	if callerLocation == nil {
 		return
 	}
 
-	if len(o.Stack) > 0 && *o.Stack[len(o.Stack)-1] == *stackFrame {
+	if len(o.CallerLocations) > 0 && *o.CallerLocations[len(o.CallerLocations)-1] == *callerLocation {
 		return
 	}
 
-	o.Stack = append(o.Stack, stackFrame)
+	o.CallerLocations = append(o.CallerLocations, callerLocation)
 }
 
 func Unpack(err error) *UnpackHierarchy {
@@ -64,67 +64,67 @@ func Unpack(err error) *UnpackHierarchy {
 }
 
 func unpack(err error, parentPC uintptr) *UnpackHierarchy {
-	stackErr := Cause(err)
-	if stackErr == nil {
+	fullStackErr := Cause(err)
+	if fullStackErr == nil {
 		return &UnpackHierarchy{
 			ErrExternal: err,
 		}
 	}
 
-	stack := stackErr.(StackError).Callers()
+	callers := fullStackErr.(FullStackError).Callers()
 
-	stackStartIndex := len(stack) - 1
+	callerStartIndex := len(callers) - 1
 	if parentPC != 0 {
-		for stackStartIndex >= 0 {
-			if stack[stackStartIndex] == parentPC {
-				stackStartIndex--
+		for callerStartIndex >= 0 {
+			if callers[callerStartIndex] == parentPC {
+				callerStartIndex--
 				break
 			}
-			stackStartIndex--
+			callerStartIndex--
 		}
 	}
 
-	var stackFramError StackFrameError
-	if e, ok := err.(StackFrameError); ok {
-		if e.GetAdditionalInformation() != nil {
-			stackFramError = e
+	var extraStackErr ExtraStackError
+	if e, ok := err.(ExtraStackError); ok {
+		if e.GetExtraStackData() != nil {
+			extraStackErr = e
 		} else {
-			stackFramError = nextStackFrameError(err)
+			extraStackErr = NextExtraStackError(err)
 		}
 	}
 
 	hierarchy := &UnpackHierarchy{}
-	for stackIndex := stackStartIndex; stackIndex >= 0; stackIndex-- {
-		for stackFramError != nil && stackIndex != len(stack)-1 && stack[stackIndex+1] == stackFramError.GetAdditionalInformation().callerCaller {
-			additionalInformation := stackFramError.GetAdditionalInformation()
-			stackFrame := getStackFrame(additionalInformation.caller)
-			if len(additionalInformation.msg) != 0 || len(additionalInformation.msgArgs) != 0 || len(additionalInformation.fields) != 0 {
+	for callerIndex := callerStartIndex; callerIndex >= 0; callerIndex-- {
+		for extraStackErr != nil && callerIndex != len(callers)-1 && callers[callerIndex+1] == extraStackErr.GetExtraStackData().callerCaller {
+			extraStackData := extraStackErr.GetExtraStackData()
+			callerLocation := getLocation(extraStackData.caller)
+			if len(extraStackData.msg) != 0 || len(extraStackData.msgArgs) != 0 || len(extraStackData.fields) != 0 {
 				hierarchy.Links = append(hierarchy.Links, &WrapLink{
-					Msg:     additionalInformation.msg,
-					MsgArgs: additionalInformation.msgArgs,
-					Fields:  additionalInformation.fields,
-					Frame:   stackFrame,
+					Msg:            extraStackData.msg,
+					MsgArgs:        extraStackData.msgArgs,
+					Fields:         extraStackData.fields,
+					CallerLocation: callerLocation,
 				})
 			}
-			hierarchy.addStackFrame(stackFrame)
+			hierarchy.addCallerLocation(callerLocation)
 
-			stackFramError = nextStackFrameError(stackFramError)
+			extraStackErr = NextExtraStackError(extraStackErr)
 		}
 
-		hierarchy.addStackFrame(getStackFrame(stack[stackIndex]))
+		hierarchy.addCallerLocation(getLocation(callers[callerIndex]))
 	}
 
-	if uerr, ok := stackErr.(interface{ Unwrap() error }); ok {
-		hierarchy.SubHierarchies = append(hierarchy.SubHierarchies, unpack(uerr.Unwrap(), stack[1]))
-	} else if uerr, ok := stackErr.(interface{ Unwrap() []error }); ok {
+	if uerr, ok := fullStackErr.(interface{ Unwrap() error }); ok {
+		hierarchy.SubHierarchies = append(hierarchy.SubHierarchies, unpack(uerr.Unwrap(), callers[1]))
+	} else if uerr, ok := fullStackErr.(interface{ Unwrap() []error }); ok {
 		for _, e := range uerr.Unwrap() {
-			hierarchy.SubHierarchies = append(hierarchy.SubHierarchies, unpack(e, stack[1]))
+			hierarchy.SubHierarchies = append(hierarchy.SubHierarchies, unpack(e, callers[1]))
 		}
 	}
 
 	if len(hierarchy.SubHierarchies) == 1 {
 		subHierarchies := hierarchy.SubHierarchies[0]
-		hierarchy.Stack = append(hierarchy.Stack, subHierarchies.Stack...)
+		hierarchy.CallerLocations = append(hierarchy.CallerLocations, subHierarchies.CallerLocations...)
 		hierarchy.Links = append(hierarchy.Links, subHierarchies.Links...)
 		hierarchy.ErrExternal = subHierarchies.ErrExternal
 		hierarchy.SubHierarchies = subHierarchies.SubHierarchies
@@ -134,11 +134,11 @@ func unpack(err error, parentPC uintptr) *UnpackHierarchy {
 }
 
 type FormatOptions struct {
-	LocationFormatFunc func(frame *StackFrame) string
+	LocationFormatFunc func(frame *Location) string
 	WithTrace          bool
 }
 
-func DefaultLocationFormatFunc(frame *StackFrame) string {
+func DefaultLocationFormatFunc(frame *Location) string {
 	return frame.Filename + ":" + strconv.Itoa(frame.Line) + "(" + frame.FuncName + ")"
 }
 
@@ -166,9 +166,9 @@ func ToCustomJSON(err error, format JSONFormat) interface{} {
 
 func toCustomJSON(hierarchy *UnpackHierarchy, format JSONFormat) interface{} {
 	root := map[string]interface{}{}
-	if format.Options.WithTrace && len(hierarchy.Stack) > 0 {
+	if format.Options.WithTrace && len(hierarchy.CallerLocations) > 0 {
 		stackArr := []string{}
-		for _, stack := range hierarchy.Stack {
+		for _, stack := range hierarchy.CallerLocations {
 			src := format.Options.LocationFormatFunc(stack)
 			stackArr = append(stackArr, src)
 		}
@@ -184,7 +184,7 @@ func toCustomJSON(hierarchy *UnpackHierarchy, format JSONFormat) interface{} {
 				wrapMap["fields"] = link.Fields
 			}
 			if format.Options.WithTrace {
-				wrapMap["src"] = format.Options.LocationFormatFunc(link.Frame)
+				wrapMap["src"] = format.Options.LocationFormatFunc(link.CallerLocation)
 			}
 			wrapArr = append(wrapArr, wrapMap)
 		}
@@ -256,12 +256,12 @@ func toCustomString(hierarchy *UnpackHierarchy, format StringFormat, level int) 
 	stackIndex := 0
 	for _, link := range hierarchy.Links {
 		if format.Options.WithTrace {
-			if stackIndex == 0 || *hierarchy.Stack[stackIndex-1] != *link.Frame {
-				for stackIndex < len(hierarchy.Stack)-1 && *hierarchy.Stack[stackIndex] != *link.Frame {
-					str += strings.Repeat(format.PreStackSep, level) + format.Options.LocationFormatFunc(hierarchy.Stack[stackIndex]) + format.StackElemSep
+			if stackIndex == 0 || *hierarchy.CallerLocations[stackIndex-1] != *link.CallerLocation {
+				for stackIndex < len(hierarchy.CallerLocations)-1 && *hierarchy.CallerLocations[stackIndex] != *link.CallerLocation {
+					str += strings.Repeat(format.PreStackSep, level) + format.Options.LocationFormatFunc(hierarchy.CallerLocations[stackIndex]) + format.StackElemSep
 					stackIndex++
 				}
-				str += strings.Repeat(format.PreStackSep, level) + format.Options.LocationFormatFunc(link.Frame) + format.MsgStackSep
+				str += strings.Repeat(format.PreStackSep, level) + format.Options.LocationFormatFunc(link.CallerLocation) + format.MsgStackSep
 				stackIndex++
 			}
 		}
@@ -272,8 +272,8 @@ func toCustomString(hierarchy *UnpackHierarchy, format StringFormat, level int) 
 		str += format.ErrorSep
 	}
 	if format.Options.WithTrace {
-		for stackIndex < len(hierarchy.Stack) {
-			str += strings.Repeat(format.PreStackSep, level) + format.Options.LocationFormatFunc(hierarchy.Stack[stackIndex]) + format.StackElemSep
+		for stackIndex < len(hierarchy.CallerLocations) {
+			str += strings.Repeat(format.PreStackSep, level) + format.Options.LocationFormatFunc(hierarchy.CallerLocations[stackIndex]) + format.StackElemSep
 			stackIndex++
 		}
 	}
