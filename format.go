@@ -217,7 +217,6 @@ type StringFormat struct {
 	PreStackSep     string // Separator at the beginning of each stack frame.
 	StackElemSep    string // Separator between elements of each stack frame.
 	ErrorSep        string // Separator between each error in the chain.
-	PreFieldSep     string // Separator at the beginning of each field.
 	FieldFormatFunc func(fields map[string]interface{}) string
 }
 
@@ -231,10 +230,8 @@ func NewDefaultStringFormat(options FormatOptions) StringFormat {
 		format.PreStackSep = "\t"
 		format.StackElemSep = "\n"
 		format.ErrorSep = "\n"
-		format.PreFieldSep = " "
 	} else {
 		format.ErrorSep = ": "
-		format.PreFieldSep = " "
 	}
 	return format
 }
@@ -267,7 +264,7 @@ func toCustomString(hierarchy *UnpackHierarchy, format StringFormat, level int) 
 		}
 		str += fmt.Sprintf(link.Msg, link.MsgArgs...)
 		if len(link.Fields) != 0 {
-			str += format.PreFieldSep + format.FieldFormatFunc(link.Fields)
+			str += strings.Repeat(format.PreStackSep, level+1) + format.FieldFormatFunc(link.Fields)
 		}
 		str += format.ErrorSep
 	}
@@ -278,7 +275,7 @@ func toCustomString(hierarchy *UnpackHierarchy, format StringFormat, level int) 
 		}
 	}
 	if hierarchy.ErrExternal != nil {
-		str += fmt.Sprint(hierarchy.ErrExternal) + format.ErrorSep
+		str += strings.Repeat(format.PreStackSep, level) + fmt.Sprint(hierarchy.ErrExternal) + format.ErrorSep
 	}
 	for i, subHierarchy := range hierarchy.SubHierarchies {
 		if format.Options.WithTrace {

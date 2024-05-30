@@ -208,7 +208,7 @@ func WrapDepths(skip int, err error, fields map[string]interface{}, msg string, 
 		}
 	}
 
-	return ErrorDepthsWrapError(skip+1, err, nil, "")
+	return ErrorDepthsWrapError(skip+1, err, fields, "")
 }
 
 func (e *wrapError) Error() string {
